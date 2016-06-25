@@ -6,6 +6,8 @@ At this stage it connects to MySQL and reads the records from any PowerDNS Gener
 
 Please note that this backend requires PowerDNS v4.X.
 
+There is a logfree branch available; there is no debug logging which will give a speed boost and has less module requirements. See this page: https://github.com/sysadminblog/powerdns-remote-perl/tree/logfree
+
 ## Usage instructions
 
 In the pdns.conf, set the launch line to include the "remote" backend. As an example:
