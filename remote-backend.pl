@@ -6,17 +6,7 @@ use warnings;
 # See the project page here: https://github.com/sysadminblog/powerdns-remote-perl/
 # Project wiki page here: https://github.com/sysadminblog/powerdns-remote-perl/wiki
 
-######### Configuration Settings Start #########
-
-# The directory in which log files will be stored.
-# Must be writable by the user PowerDNS runs as.
-my $log_path = '/var/log/pdns_remote';
-
-# Enable debug logging. 0 will disable, 1 will enable.
-# This setting only affects the log files that get written into $log_path.
-# When running the script ont he command line debugging will always be enabled by default but
-# debug logs will not be written to the log files, only printed to STDOUT.
-my $debug = 1;
+# This has been taken from the logfree branch. This branch does not include any logging for a slight performance boost.
 
 ######### PDNSRemote Code Start #########
 
@@ -24,138 +14,23 @@ package PDNSRemote;
 use strict;
 use warnings;
 use Carp;
-use Data::Dumper;
 use DBI;
 use JSON::Any;
-use Log::Log4perl qw(get_logger);
 
 ### PDNSRemote->new - Initialise the PDNSRemote package
 sub new {
 	my $class = shift;
 	my $self  = {};
 
-	# Check if this is running via the command line. If so, debug logging will be enabled to STDOUT
-	if   ( $ENV{'USER'} ) { $self->{_running_interactive} = 1; }
-	else                  { $self->{_running_interactive} = 0; }
-
 	# Create a JSON encoder/decoder object
 	$self->{_json} = JSON::Any->new;
 
 	# Initialize default values
 	$self->{_result} = $self->{_json}->false;
-	$self->{_log}    = [];
 
 	bless $self, $class;
 
-	# Set up the logging
-	$self->logSetup;
 	return $self;
-}
-
-### PDNSRemote->start_log - Set up logging
-sub logSetup {
-	my $self = shift;
-
-	# Validate a log path was provided and can be written to
-	if ( !defined $log_path || $log_path eq '' ) {
-		croak "The $log_path setting has not been set. A valid directory for logging must be supplied.";
-	}
-	else {
-		# Validate log directory exists
-		if ( !-d $log_path || !-w $log_path ) {
-			croak "The directory '${log_path}' does not exist or the permissions for it do not allow this script to write log files. Please verify the directory and permissions.";
-		}
-		else {
-			# If there is already an existing log file, verify its writable
-			if ( -f "${log_path}/pdns_remote.log" ) {
-				if ( !-w "${log_path}/pdns_remote.log" ) {
-					if ( $self->{_running_interactive} ) {
-						carp "The log file '${log_path}/pdns_remote.log' already exists but cannot be written to. The script appears to be running interactively so this is not required.";
-					}
-					else {
-						croak "The log file '${log_path}/pdns_remote.log' cannot be written to, please check permissions";
-					}
-				}
-			}
-		}
-	}
-
-	# Set up variable for the log config set next
-	my $rootlogger;
-
-	# Check if this is running interactive. If so, set the root log targets to DEBUG and Screen - no log files will get written to disk.
-	# If not running interactive, the logs will only be configured
-	if ( $self->{_running_interactive} ) { $rootlogger = 'DEBUG, Screen'; }
-	elsif ($debug) { $rootlogger = 'DEBUG, AppInfo, AppError, AppDebug'; }
-	else           { $rootlogger = 'DEBUG, AppInfo, AppError'; }
-
-	my $log_conf = "
-    log4perl.rootLogger                 = $rootlogger
-
-    log4perl.appender.AppInfo              = Log::Dispatch::FileRotate
-    log4perl.appender.AppInfo.filename     = ${log_path}/pdns_remote.log
-    log4perl.appender.AppInfo.mode         = append
-    log4perl.appender.AppInfo.autoflush    = 1
-    log4perl.appender.AppInfo.size         = 10485760
-    log4perl.appender.AppInfo.max          = 10
-    log4perl.appender.AppInfo.layout       = Log::Log4perl::Layout::PatternLayout
-    log4perl.appender.AppInfo.recreate     = 1
-    log4perl.appender.AppInfo.Threshold    = INFO
-    log4perl.appender.AppInfo.layout.ConversionPattern = %d %P %p %m %n
-
-    log4perl.appender.AppDebug              = Log::Dispatch::FileRotate
-    log4perl.appender.AppDebug.filename     = ${log_path}/pdns_remote-debug.log
-    log4perl.appender.AppDebug.mode         = append
-    log4perl.appender.AppDebug.autoflush    = 1
-    log4perl.appender.AppDebug.size         = 10485760
-    log4perl.appender.AppDebug.max          = 10
-    log4perl.appender.AppDebug.layout       = Log::Log4perl::Layout::PatternLayout
-    log4perl.appender.AppDebug.recreate     = 1
-    log4perl.appender.AppDebug.Threshold    = DEBUG
-    log4perl.appender.AppDebug.layout.ConversionPattern = %d %P %p %m %n
-
-    log4perl.appender.AppError              = Log::Dispatch::FileRotate
-    log4perl.appender.AppError.filename     = ${log_path}/pdns_remote-error.log
-    log4perl.appender.AppError.mode         = append
-    log4perl.appender.AppError.autoflush    = 1
-    log4perl.appender.AppError.size         = 10485760
-    log4perl.appender.AppError.max          = 10
-    log4perl.appender.AppError.layout       = Log::Log4perl::Layout::PatternLayout
-    log4perl.appender.AppError.recreate     = 1
-    log4perl.appender.AppError.Threshold    = ERROR
-    log4perl.appender.AppError.layout.ConversionPattern = %d %P %p %m %n
-
-    log4perl.appender.Screen                = Log::Log4perl::Appender::Screen
-    log4perl.appender.Screen.stderr         = 0
-    log4perl.appender.Screen.layout         = Log::Log4perl::Layout::PatternLayout
-    log4perl.appender.Screen.Threshold      = DEBUG
-    log4perl.appender.Screen.layout.ConversionPattern = %d %P %p %m %n
-  ";
-	Log::Log4perl::init( \$log_conf );
-
-	$self->{_logger} = Log::Log4perl->get_logger();
-	return;
-}
-
-### PDNSRemote->logInfo - Log a new info event
-sub logInfo {
-	my $self    = shift;
-	my $message = shift;
-	$self->{_logger}->info($message);
-}
-
-### PDNSRemote->logDebug - Log a new debug event
-sub logDebug {
-	my $self    = shift;
-	my $message = shift;
-	$self->{_logger}->debug($message);
-}
-
-### PDNSRemote->logError - Log a new error event
-sub logError {
-	my $self    = shift;
-	my $message = shift;
-	$self->{_logger}->error($message);
 }
 
 ### PDNSRemote->run - Run the main loop
@@ -172,13 +47,8 @@ sub run {
 		# Decode the JSON request
 		my $req = $self->{_json}->decode($_);
 
-		# Debugging
-		$self->logDebug('Start processing new request:');
-		$self->logDebug( Dumper($req) );
-
 		# Validate there is a method and paramaters provided
 		if ( !defined $req->{method} && !defined $req->{parameters} ) {
-			$self->logError( 'Invalid request received from PowerDNS - missing method or parameters. Check the debug log (if enabled) for the request that failed.' );
 			next;
 		}
 
@@ -199,14 +69,10 @@ sub run {
 			}
 
 			# Execute the method with the given parameters
-			$self->logDebug("Executing method $method");
 			$self->$method( $req->{parameters} );
 		}
 		else {
-			# The request method does not have a function in this script, log and return error
-			$self->logError( 'The request received from PowerDNS does not have a method in this script (it has not been implemented most likely). The request method was: '
-				. $req->{method}
-			);
+			# The request method does not have a function in this script, return error
 			$self->returnError;
 		}
 
@@ -215,10 +81,6 @@ sub run {
 
 		# Send the results to PowerDNS
 		print $self->{_json}->encode($return), "\r\n";
-
-		# Log the results for debugging
-		$self->logDebug('Sent results to PowerDNS:');
-		$self->logDebug( Dumper($return) );
 
 		# Reset the variables for the next loop
 		$self->{_result} = $self->{_json}->false;
@@ -295,14 +157,6 @@ sub getDomainID {
 	my $query     = $statement->execute( ($id) );
 	my ($domain)  = $statement->fetchrow;
 
-	# Log some info
-	if ($domain) {
-		$self->logDebug("SQL - getDomainID: ${id} = ${domain}");
-	}
-	else {
-		$self->logDebug("SQL - getDomainID: NO RESULT");
-	}
-
 	return $domain;
 }
 
@@ -316,14 +170,6 @@ sub getDomainName {
 	my $statement = $db->prepare("SELECT domains.id FROM domains WHERE name = ?");
 	my $query     = $statement->execute( ($domain) );
 	my ($id)      = $statement->fetchrow;
-
-	# Log some info
-	if ($id) {
-		$self->logDebug("SQL - getDomainName: ${domain} = ${id}");
-	}
-	else {
-		$self->logDebug("SQL - getDomainName: NO RESULT");
-	}
 
 	return $id;
 }
@@ -340,12 +186,10 @@ sub getRecords {
 	if ( !$type || $type eq 'ANY' ) {
 		$statement = $db->prepare( 'SELECT id,domain_id,name,type,content,prio,ttl,auth FROM records WHERE name = ?' );
 		$statement->execute($domain);
-		$self->logDebug("Running getRecords: ${domain}");
 	}
 	else {
 		$statement = $db->prepare( 'SELECT id,domain_id,name,type,content,prio,ttl,auth FROM records WHERE name = ? AND type = ?' );
 		$statement->execute( $domain, $type );
-		$self->logDebug("Running getRecords: ${domain} (${type})");
 	}
 
 	# Loop over each result (if any) and call addResultRR to return the results to PowerDNS
@@ -366,8 +210,7 @@ sub api_initialize {
 		|| !defined $param->{username}
 		|| !defined $param->{password} )
 	{
-		$self->error( 'Missing paramaters to connect to the database, please ensure the remote-connection-string in pdns.conf has been set correctly. The script will not work until you do this.' );
-		$self->returnError( 'PowerDNS remote backend has not been configured correctly. Check the error log for more information.' );
+		$self->returnError( 'PowerDNS remote backend has not been configured correctly.' );
 		return;
 	}
 
@@ -386,7 +229,6 @@ sub api_initialize {
 		$self->returnSuccess( 'PowerDNS remote backend has been initialised and connected to the database' );
 	}
 	else {
-		$self->logError('MySQL connection failed');
 		die;
 	}
 
@@ -432,9 +274,6 @@ sub api_lookup {
 	else {
 		$client = 'UNKNOWN';
 	}
-
-	# Log the query
-	$self->logDebug( "Executing method getRecords for name $qname of type $qtype for $client");
 
 	# Run the query for the records. If there is a response, we will give this back to PowerDNS.
 	$self->getRecords( $qname, $qtype );
